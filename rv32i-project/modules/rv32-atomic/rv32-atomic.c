@@ -38,6 +38,29 @@ execute(rv32_t *cpu)
         // Reconstruct 32-bit instruction word
         uint32 ins = (uint32)bytes[0] | ((uint32)bytes[1] << 8)
                 | ((uint32)bytes[2] << 16) | ((uint32)bytes[3] << 24);
+
+        // Decode Phase
+
+        // Extract standard RISC-V instruction fields
+        uint32 opcode = ins & 0x7f;
+        unsigned rd     = (ins >> 7) & 31;
+        unsigned funct3 = (ins >> 12) & 7;
+        unsigned rs1    = (ins >> 15) & 31;
+        unsigned rs2    = (ins >> 20) & 31;
+        unsigned funct7 = ins >> 25;
+
+        // Read the values of the source registers
+        uint32 val_rs1 = reg_read_x(cpu, rs1);
+        uint32 val_rs2 = reg_read_x(cpu, rs2);
+
+        // Immediate values for I-type instructions
+        uint32 imm_i = sign_extend(ins >> 20, 12);
+
+        // Always increment the PC and cycle/step counters
+        // after executing the instruction
+        cpu->pc = pc + 4;
+        increment_cycle(cpu);
+        increment_step(cpu);
 }
 
 /* Text for Simics' disassemble CLI command (e.g. "disassemble 0x0 10")
