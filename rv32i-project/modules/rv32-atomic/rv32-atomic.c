@@ -16,6 +16,13 @@
 #include "rv32-core.h"
 #include "rv32-helpers.h"
 
+// static uint32
+// sign_extend(uint32 value, unsigned bits)
+// {
+//         uint32 sign = 1u << (bits - 1);
+//         return (value ^ sign) - sign;
+// }
+
 void
 execute(rv32_t *cpu)
 {
