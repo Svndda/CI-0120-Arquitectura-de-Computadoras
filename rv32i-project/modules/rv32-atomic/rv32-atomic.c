@@ -19,7 +19,25 @@
 void
 execute(rv32_t *cpu)
 {
-        /* TODO */
+        // Save the current PC and prepare to fetch instruction bytes
+        uint32 pc = cpu->pc;
+        uint8 bytes[4];
+
+        // Fetch Phase
+        if (pc & 3) {
+                rv32_halt(cpu, "misaligned instruction address");
+                return;
+        }
+
+        // Read the instruction bytes from memory
+        if (!read_simics_memory(cpu, pc, bytes, sizeof bytes)) {
+                rv32_halt(cpu, "instruction fetch failed");
+                return;
+        }
+
+        // Reconstruct 32-bit instruction word
+        uint32 ins = (uint32)bytes[0] | ((uint32)bytes[1] << 8)
+                | ((uint32)bytes[2] << 16) | ((uint32)bytes[3] << 24);
 }
 
 /* Text for Simics' disassemble CLI command (e.g. "disassemble 0x0 10")
