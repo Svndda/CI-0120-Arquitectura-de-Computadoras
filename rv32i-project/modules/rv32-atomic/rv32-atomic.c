@@ -61,13 +61,67 @@ execute(rv32_t *cpu)
         uint32 val_rs2 = reg_read_x(cpu, rs2);
 
         // Immediate values for I-type instructions
-        uint32 imm_i = sign_extend(ins >> 20, 12);
+        uint32 imm = sign_extend(ins >> 20, 12);
+        // R-type instruction result
+        uint32 result = 0;
+        // The next program counter value, default to sequential execution
+        uint32 next_pc = pc + 4;
 
-        // Always increment the PC and cycle/step counters
-        // after executing the instruction
-        cpu->pc = pc + 4;
+        // Control flags for instruction execution
+        bool write_rd = false;
+        bool branch = false;\
+
+        // Switch on the opcode to determine instruction type
+        switch (opcode) {
+        // LUI - Load Upper Immediate
+        case 0x37:
+                result = ins & 0xfffff000u;
+                write_rd = true;
+                break;
+        // AUIPC - Add Upper Immediate to PC
+        case 0x17:
+                result = pc + (ins & 0xfffff000u);
+                write_rd = true;
+                break;
+        // JAL - Jump and Link
+        case 0x6f:
+                imm = ((ins >> 31) << 20) | (((ins >> 12) & 0xff) << 12)
+                        | (((ins >> 20) & 1) << 11)
+                        | (((ins >> 21) & 0x3ff) << 1);
+                next_pc = pc + sign_extend(imm, 21);
+                result = pc + 4;
+                write_rd = true;
+                break;
+        // JALR - Jump and Link Register
+        case 0x67:
+                if (funct3 != 0)
+                        goto illegal;
+                next_pc = (val_rs1 + imm) & ~1u;
+                result = pc + 4;
+                write_rd = true;
+                break;
+        default:
+                goto illegal;
+        }
+
+        if (next_pc & 3) {
+                rv32_halt(cpu, "misaligned instruction address");
+                return;
+        }
+        
+        if (write_rd) {
+                reg_write_x(cpu, rd, result);
+        }
+        // Update the program counter and increment cycle/step counters
+        cpu->pc = next_pc;
         increment_cycle(cpu);
         increment_step(cpu);
+        // Return to the caller after executing the instruction
+        return;
+
+        // Handle any illegal instruction case
+illegal:
+        illegal_instruction(cpu, pc, ins);
 }
 
 /* Text for Simics' disassemble CLI command (e.g. "disassemble 0x0 10")
