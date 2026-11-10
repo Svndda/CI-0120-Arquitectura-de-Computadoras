@@ -69,7 +69,7 @@ execute(rv32_t *cpu)
 
         // Control flags for instruction execution
         bool write_rd = false;
-        bool branch = false;\
+        bool branch = false;
 
         // Switch on the opcode to determine instruction type
         switch (opcode) {
@@ -100,6 +100,86 @@ execute(rv32_t *cpu)
                 result = pc + 4;
                 write_rd = true;
                 break;
+        // B-type conditional branches
+        case 0x63:
+                // Determine the branch condition based on funct3
+                switch (funct3) {
+                case 0: branch = a == b; break;
+                case 1: branch = a != b; break;
+                case 4: branch = signed_less(a, b); break;
+                case 5: branch = !signed_less(a, b); break;
+                case 6: branch = a < b; break;
+                case 7: branch = a >= b; break;
+                default: goto illegal;
+                }
+                imm = ((ins >> 31) << 12) | (((ins >> 7) & 1) << 11)
+                        | (((ins >> 25) & 0x3f) << 5)
+                        | (((ins >> 8) & 0xf) << 1);
+                if (branch)
+                        next_pc = pc + sign_extend(imm, 13);
+                break;
+        // I-type arithmetic instructions
+        case 0x13:
+                // Determine the operation based on funct3 and funct7
+                switch (funct3) {
+                case 0: result = a + imm; break;
+                case 2: result = signed_less(a, imm); break;
+                case 3: result = a < imm; break;
+                case 4: result = a ^ imm; break;
+                case 6: result = a | imm; break;
+                case 7: result = a & imm; break;
+                case 1:
+                        if (funct7 != 0) {
+                                goto illegal;
+                        }
+                        result = a << rs2;
+                        break;
+                case 5:
+                        if (funct7 == 0) {
+                                result = a >> rs2;
+                        }
+                        else if (funct7 == 0x20) {
+                                result = arithmetic_shift_right(a, rs2);
+                        }
+                        else goto illegal;
+                        break;
+                }
+                write_rd = true;
+                break;
+        // R-type arithmetic instructions
+        case 0x33:
+                // Validate funct7 and funct3 for R-type instructions
+                if (funct7 != 0 && funct7 != 0x20) {
+                        goto illegal;
+                }
+                if (funct7 == 0x20 && funct3 != 0 && funct3 != 5) {
+                        goto illegal;
+                }
+                switch (funct3) {
+                case 0: result = funct7 ? a - b : a + b; break;
+                case 1: result = a << (b & 31); break;
+                case 2: result = signed_less(a, b); break;
+                case 3: result = a < b; break;
+                case 4: result = a ^ b; break;
+                case 5: result = funct7 ? arithmetic_shift_right(a, b & 31): a >> (b & 31);
+                        break;
+                case 6: result = a | b; break;
+                case 7: result = a & b; break;
+                }
+                write_rd = true;
+                break;
+        // ECALL and EBREAK instructions
+        case 0x73:
+                // Handle EBREAK instruction specifically
+                if (ins != 0x00100073u) {
+                        goto illegal;
+                }
+                // Increment cycle and step counters before halting
+                increment_cycle(cpu);
+                increment_step(cpu);
+                // Halt the CPU
+                ebreak(cpu);
+                return;
         default:
                 goto illegal;
         }
