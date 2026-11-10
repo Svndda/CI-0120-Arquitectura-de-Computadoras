@@ -23,6 +23,21 @@ sign_extend(uint32 value, unsigned bits)
         return (value ^ sign) - sign;
 }
 
+static bool
+signed_less(uint32 a, uint32 b)
+{
+        return (a ^ 0x80000000u) < (b ^ 0x80000000u);
+}
+
+static uint32
+arithmetic_shift_right(uint32 value, unsigned amount)
+{
+        if (amount == 0)
+                return value;
+        return (value >> amount)
+                | ((value & 0x80000000u) ? (~0u << (32 - amount)) : 0);
+}
+
 void
 execute(rv32_t *cpu)
 {
