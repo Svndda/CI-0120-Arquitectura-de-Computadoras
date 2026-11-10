@@ -1,0 +1,18 @@
+addi t0, zero, 3
+addi t1, zero, 0
+loop:
+addi t1, t1, 1
+addi t0, t0, -1
+bne t0, zero, loop
+addi a0, zero, -1
+addi a1, a0, 1
+srai a2, a0, 31
+srli a3, a0, 31
+auipc ra, 0
+jalr ra, 13(ra)
+addi a4, zero, 99
+addi a4, zero, 7
+jal a5, done
+addi a4, zero, 99
+done:
+ebreak
