@@ -1,0 +1,8 @@
+lui x1, 0x12345
+addi x3, x0, 100
+sub x14, x4, x3
+srai x12, x4, 1
+beq x5, x16, 8
+jal x25, 8
+jalr x27, 13(x26)
+ebreak
