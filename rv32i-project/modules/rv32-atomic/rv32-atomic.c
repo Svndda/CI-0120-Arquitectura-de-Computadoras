@@ -72,8 +72,8 @@ execute(rv32_t *cpu)
         unsigned funct7 = ins >> 25;
 
         // Read the values of the source registers
-        uint32 val_rs1 = reg_read_x(cpu, rs1);
-        uint32 val_rs2 = reg_read_x(cpu, rs2);
+        uint32 a = reg_read_x(cpu, rs1);
+        uint32 b = reg_read_x(cpu, rs2);
 
         // Immediate values for I-type instructions
         uint32 imm = sign_extend(ins >> 20, 12);
@@ -111,7 +111,7 @@ execute(rv32_t *cpu)
         case 0x67:
                 if (funct3 != 0)
                         goto illegal;
-                next_pc = (val_rs1 + imm) & ~1u;
+                next_pc = (a + imm) & ~1u;
                 result = pc + 4;
                 write_rd = true;
                 break;
