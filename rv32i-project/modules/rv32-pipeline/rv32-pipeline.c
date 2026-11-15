@@ -37,6 +37,46 @@ arithmetic_shift_right(uint32 value, unsigned amount)
         return (value >> amount) | ((value & 0x80000000u) ? (~0u << (32 - amount)) : 0);
 }
 
+static void
+stage_if(rv32_t *cpu, bool flush, uint32 redirect_pc, if_id_reg_t *next_if_id)
+{       
+        // Clear the next IF/ID register
+        memset(next_if_id, 0, sizeof(*next_if_id));
+
+        if (flush) {
+                cpu->fetch_pc = redirect_pc;
+                return;
+        }
+
+        // Fetch the instruction at the current fetch PC
+        uint32 pc = cpu->fetch_pc;
+        next_if_id->valid = true;
+        next_if_id->pc = pc;
+
+        // Check for misaligned instruction address
+        if (pc & 3u) {
+                next_if_id->is_fetch_fault = true;
+                next_if_id->fault_reason = "misaligned instruction address";
+                return;
+        }
+
+        // Read 4 bytes from memory at the fetch PC
+        uint8 bytes[4];
+        if (!read_simics_memory(cpu, pc, bytes, sizeof bytes)) {
+                next_if_id->is_fetch_fault = true;
+                next_if_id->fault_reason = "instruction fetch failed";
+                return;
+        }
+
+        // Combine the bytes into a 32-bit instruction
+        next_if_id->instr = (uint32)bytes[0]
+                          | ((uint32)bytes[1] << 8)
+                          | ((uint32)bytes[2] << 16)
+                          | ((uint32)bytes[3] << 24);
+        cpu->fetch_pc = pc + 4;
+}
+
+
 void execute(rv32_t *cpu)
 {
         /* TODO */
