@@ -211,6 +211,159 @@ stage_id(rv32_t *cpu, bool flush, id_ex_reg_t *next_id_ex)
         }
 }
 
+static bool
+stage_ex(rv32_t *cpu, const wb_fwd_reg_t *wb_fwd,
+         ex_wb_reg_t *next_ex_wb, bool *flush_pipeline, uint32 *redirect_pc)
+{       
+        // Clear the next EX/WB register and initialize flush_pipeline and redirect_pc
+        memset(next_ex_wb, 0, sizeof(*next_ex_wb));
+        *flush_pipeline = false;
+        *redirect_pc = 0;
+
+        // Get the input ID/EX register
+        const id_ex_reg_t *in = &cpu->id_ex;
+        if (!in->valid)
+                return true;
+
+        // Set the next EX/WB register fields
+        next_ex_wb->valid = true;
+        next_ex_wb->pc = in->pc;
+        next_ex_wb->next_pc = in->pc + 4;
+        next_ex_wb->instr = in->instr;
+        next_ex_wb->rd = in->rd;
+        next_ex_wb->write_rd = in->write_rd;
+        next_ex_wb->is_ebreak = in->is_ebreak;
+        next_ex_wb->is_illegal = in->is_illegal;
+        next_ex_wb->is_fetch_fault = in->is_fetch_fault;
+        next_ex_wb->fault_reason = in->fault_reason;
+
+        // If there was a fetch fault, illegal instruction, or EBREAK, just propagate it to the next EX/WB register
+        if (in->is_fetch_fault || in->is_illegal || in->is_ebreak) {
+                return true;
+        } 
+
+        // Forwarding logic for source registers
+        uint32 op_a = in->val_a;
+        uint32 op_b = in->val_b;
+
+        // Forwarding for rs1
+        if (in->uses_rs1 && in->rs1 != 0) {
+                if (cpu->ex_wb.valid && cpu->ex_wb.write_rd && cpu->ex_wb.rd == in->rs1) {
+                        op_a = cpu->ex_wb.result;
+                } else if (wb_fwd->valid && wb_fwd->write_rd && wb_fwd->rd == in->rs1) {
+                        op_a = wb_fwd->result;
+                }
+        }
+
+        // Forwarding for rs2
+        if (in->uses_rs2 && in->rs2 != 0) {
+                if (cpu->ex_wb.valid && cpu->ex_wb.write_rd && cpu->ex_wb.rd == in->rs2) {
+                        op_b = cpu->ex_wb.result;
+                } else if (wb_fwd->valid && wb_fwd->write_rd && wb_fwd->rd == in->rs2) {
+                        op_b = wb_fwd->result;
+                }
+        }
+
+        // Execute the instruction based on the opcode and funct3/funct7 fields
+        uint32 result = 0;
+        uint32 target_pc = in->pc + 4;
+        bool take_redirect = false;
+
+        switch (in->opcode) {
+        // LUI
+        case 0x37:
+                result = in->imm;
+                break;
+        // AUIPC
+        case 0x17:
+                result = in->pc + in->imm;
+                break;
+        // J-type jumps 
+        case 0x6f:
+                target_pc = in->pc + in->imm;
+                result = in->pc + 4;
+                take_redirect = true;
+                break;
+        case 0x67:
+                target_pc = (op_a + in->imm) & ~1u;
+                result = in->pc + 4;
+                take_redirect = true;
+                break;
+        // B-type conditional branches
+        case 0x63: {
+                // Determine if the branch should be taken based on funct3
+                bool branch = false;
+                switch (in->funct3) {
+                case 0: branch = (op_a == op_b); break;
+                case 1: branch = (op_a != op_b); break;
+                case 4: branch = signed_less(op_a, op_b); break;
+                case 5: branch = !signed_less(op_a, op_b); break;
+                case 6: branch = (op_a < op_b); break;
+                case 7: branch = (op_a >= op_b); break;
+                default: break;
+                }
+                if (branch) {
+                        target_pc = in->pc + in->imm;
+                        take_redirect = true;
+                }
+                break;
+        }
+        // I-type ALU
+        case 0x13:
+                // Execute I-type ALU operations based on funct3
+                switch (in->funct3) {
+                case 0: result = op_a + in->imm; break;
+                case 2: result = signed_less(op_a, in->imm); break;
+                case 3: result = op_a < in->imm; break;
+                case 4: result = op_a ^ in->imm; break;
+                case 6: result = op_a | in->imm; break;
+                case 7: result = op_a & in->imm; break;
+                case 1: result = op_a << in->rs2; break;
+                case 5: result = (in->funct7 == 0x20)
+                                ? arithmetic_shift_right(op_a, in->rs2)
+                                : (op_a >> in->rs2);
+                        break;
+                }
+                break;
+        // R-type ALU
+        case 0x33:
+                // R-type ALU operations based on funct3 and funct7
+                switch (in->funct3) {
+                case 0: result = in->funct7 ? (op_a - op_b) : (op_a + op_b); break;
+                case 1: result = op_a << (op_b & 31); break;
+                case 2: result = signed_less(op_a, op_b); break;
+                case 3: result = op_a < op_b; break;
+                case 4: result = op_a ^ op_b; break;
+                case 5: result = in->funct7
+                                ? arithmetic_shift_right(op_a, op_b & 31)
+                                : (op_a >> (op_b & 31));
+                        break;
+                case 6: result = op_a | op_b; break;
+                case 7: result = op_a & op_b; break;
+                }
+                break;
+        default:
+                break;
+        }
+
+        // Handle pipeline redirection if needed
+        if (take_redirect) {
+                if (target_pc & 3u) {
+                        cpu->pc = in->pc;
+                        cpu->arch_pc = in->pc;
+                        rv32_halt(cpu, "misaligned instruction address");
+                        return false;
+                }
+                next_ex_wb->next_pc = target_pc;
+                *flush_pipeline = true;
+                *redirect_pc = target_pc;
+        }
+
+        // Set the result in the next EX/WB register
+        next_ex_wb->result = result;
+        return true;
+}
+
 void execute(rv32_t *cpu)
 {
         /* TODO */
