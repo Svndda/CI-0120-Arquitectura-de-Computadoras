@@ -1,0 +1,20 @@
+addi x1, x0, 5
+addi x2, x0, 5
+
+beq  x1, x2, after_beq
+addi x10, x0, 111
+.word 0x02000033
+
+after_beq:
+jal  x3, after_jal
+addi x11, x0, 222
+addi x12, x0, 333
+
+after_jal:
+auipc x4, 0
+jalr x5, 17(x4)
+addi x13, x0, 444
+.word 0xffffffff
+
+addi x6, x0, 88
+ebreak
