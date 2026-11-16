@@ -37,6 +37,59 @@ arithmetic_shift_right(uint32 value, unsigned amount)
         return (value >> amount) | ((value & 0x80000000u) ? (~0u << (32 - amount)) : 0);
 }
 
+static bool
+stage_wb(rv32_t *cpu, wb_fwd_reg_t *wb_fwd)
+{       
+        // Clear the write-back forwarding register
+        memset(wb_fwd, 0, sizeof(*wb_fwd));
+        const ex_wb_reg_t *in = &cpu->ex_wb;
+
+        // If the EX/WB register is not valid, there's nothing to do
+        if (!in->valid) {
+                return true;
+        }
+
+        // Fault handling: check for fetch fault, illegal instruction, or EBREAK
+        if (in->is_fetch_fault) {
+                cpu->pc = in->pc;
+                cpu->arch_pc = in->pc;
+                rv32_halt(cpu, in->fault_reason);
+                return false;
+        }
+
+        // Fault handling: check for illegal instruction
+        if (in->is_illegal) {
+                cpu->pc = in->pc;
+                cpu->arch_pc = in->pc;
+                illegal_instruction(cpu, in->pc, in->instr);
+                return false;
+        }
+
+        // Fault handling: check for EBREAK instruction
+        if (in->is_ebreak) {
+                cpu->pc = in->pc;
+                cpu->arch_pc = in->pc;
+                increment_cycle(cpu);
+                increment_step(cpu);
+                ebreak(cpu);
+                return false;
+        }
+
+        // If the instruction writes to a register, perform the write-back and set up forwarding
+        if (in->write_rd) {
+                reg_write_x(cpu, in->rd, in->result);
+                wb_fwd->valid = true;
+                wb_fwd->write_rd = true;
+                wb_fwd->rd = in->rd;
+                wb_fwd->result = in->result;
+        }
+
+        // Update the program counter and architecture PC to the next PC
+        cpu->pc = in->next_pc;
+        cpu->arch_pc = in->next_pc;
+        increment_step(cpu);
+        return true;
+}
 
 static bool
 stage_ex(rv32_t *cpu, const wb_fwd_reg_t *wb_fwd,
@@ -49,8 +102,10 @@ stage_ex(rv32_t *cpu, const wb_fwd_reg_t *wb_fwd,
 
         // Get the input ID/EX register
         const id_ex_reg_t *in = &cpu->id_ex;
-        if (!in->valid)
+        if (!in->valid) {
                 return true;
+
+        }
 
         // Set the next EX/WB register fields
         next_ex_wb->valid = true;
@@ -241,7 +296,7 @@ stage_id(rv32_t *cpu, bool flush, id_ex_reg_t *next_id_ex)
                 next_id_ex->write_rd = true;
                 break;
         //  JAL instruction
-        case 0x6f:
+        case 0x6f: {
                 uint32 raw_imm = ((ins >> 31) << 20)
                                | (((ins >> 12) & 0xffu) << 12)
                                | (((ins >> 20) & 1u) << 11)
@@ -249,9 +304,9 @@ stage_id(rv32_t *cpu, bool flush, id_ex_reg_t *next_id_ex)
                 next_id_ex->imm = sign_extend(raw_imm, 21);
                 next_id_ex->write_rd = true;
                 break;
-        
+        }
         // JALR instruction
-        case 0x67:
+        case 0x67: {
                 if (funct3 != 0) {
                         next_id_ex->is_illegal = true;
                         return;
@@ -261,8 +316,9 @@ stage_id(rv32_t *cpu, bool flush, id_ex_reg_t *next_id_ex)
                 next_id_ex->val_a = reg_read_x(cpu, rs1);
                 next_id_ex->write_rd = true;
                 break;
+        }
         // Branch instructions
-        case 0x63: 
+        case 0x63: {
                 if (funct3 == 2 || funct3 == 3) {
                         next_id_ex->is_illegal = true;
                         return;
@@ -277,9 +333,9 @@ stage_id(rv32_t *cpu, bool flush, id_ex_reg_t *next_id_ex)
                 next_id_ex->val_a = reg_read_x(cpu, rs1);
                 next_id_ex->val_b = reg_read_x(cpu, rs2);
                 break;
-        
+        }
         // I-type ALU instructions
-        case 0x13:
+        case 0x13: {
                 if (funct3 == 1 && funct7 != 0) {
                         next_id_ex->is_illegal = true;
                         return;
@@ -293,8 +349,9 @@ stage_id(rv32_t *cpu, bool flush, id_ex_reg_t *next_id_ex)
                 next_id_ex->val_a = reg_read_x(cpu, rs1);
                 next_id_ex->write_rd = true;
                 break;
+        }
         // R-type ALU instructions
-        case 0x33:
+        case 0x33: {
                 if (funct7 != 0 && funct7 != 0x20) {
                         next_id_ex->is_illegal = true;
                         return;
@@ -309,14 +366,16 @@ stage_id(rv32_t *cpu, bool flush, id_ex_reg_t *next_id_ex)
                 next_id_ex->val_b = reg_read_x(cpu, rs2);
                 next_id_ex->write_rd = true;
                 break;
+        }
         // EBREAK instruction
-        case 0x73:
+        case 0x73: {
                 if (ins != 0x00100073u) {
                         next_id_ex->is_illegal = true;
                         return;
                 }
                 next_id_ex->is_ebreak = true;
                 break;
+        }
         // illegal instructions
         default:
                 next_id_ex->is_illegal = true;
@@ -365,7 +424,44 @@ stage_if(rv32_t *cpu, bool flush, uint32 redirect_pc, if_id_reg_t *next_if_id)
 
 void execute(rv32_t *cpu)
 {
-        /* TODO */
+        // If the program counter has changed, reset the pipeline registers and fetch PC
+        if (cpu->pc != cpu->arch_pc) {
+                cpu->arch_pc = cpu->pc;
+                cpu->fetch_pc = cpu->pc;
+                memset(&cpu->if_id, 0, sizeof(cpu->if_id));
+                memset(&cpu->id_ex, 0, sizeof(cpu->id_ex));
+                memset(&cpu->ex_wb, 0, sizeof(cpu->ex_wb));
+        }
+
+        // Declare the pipeline registers for the next cycle
+        wb_fwd_reg_t wb_fwd;
+        ex_wb_reg_t next_ex_wb;
+        id_ex_reg_t next_id_ex;
+        if_id_reg_t next_if_id;
+        bool flush_pipeline = false;
+        uint32 redirect_pc = 0;
+
+        // Write-back stage: handle any write-back operations and check for faults
+        if (!stage_wb(cpu, &wb_fwd))
+                return;
+
+        // Execute stage: perform the instruction execution and handle any pipeline redirection
+        if (!stage_ex(cpu, &wb_fwd, &next_ex_wb, &flush_pipeline, &redirect_pc))
+                return;
+
+        // Instruction decode stage: decode the instruction and set up the next ID/EX register
+        stage_id(cpu, flush_pipeline, &next_id_ex);
+
+        // Instruction fetch stage: fetch the next instruction and set up the next IF/ID register
+        stage_if(cpu, flush_pipeline, redirect_pc, &next_if_id);
+
+        // Update the pipeline registers for the next cycle
+        cpu->ex_wb = next_ex_wb;
+        cpu->id_ex = next_id_ex;
+        cpu->if_id = next_if_id;
+
+        // Increment the cycle count for the CPU
+        increment_cycle(cpu);
 }
 
 /* Text for Simics' disassemble CLI command (e.g. "disassemble 0x0 10")
