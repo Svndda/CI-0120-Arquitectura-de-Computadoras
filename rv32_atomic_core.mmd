@@ -1,0 +1,62 @@
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'fontFamily': 'Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
+    'fontSize': '14px',
+    'lineColor': '#64748b'
+  },
+  'flowchart': {
+    'curve': 'basis',
+    'nodeSpacing': 45,
+    'rankSpacing': 50,
+    'padding': 16
+  }
+}}%%
+
+flowchart TD
+    %% ================================
+    %%  RV32-Atomic - Arquitectura del núcleo (monociclo)
+    %% ================================
+
+    PC(["<b>PC</b><br/>contador de programa"]):::control
+    Fetch["<b>FETCH</b><br/>leer instrucción de memoria<br/><code>4 bytes</code> en <code>PC</code>"]:::control
+    Decode["<b>DECODE</b><br/>extraer <code>opcode, rd, funct3, rs1, rs2, funct7</code><br/>calcular inmediato <code>I-type</code>"]:::control
+    RegFile["<b>BANCO DE REGISTROS x[32]</b><br/>leer <code>rs1 → a</code><br/>leer <code>rs2 → b</code><br/><code>x0</code> hardwired a <code>0</code>"]:::control
+
+    MuxOp{"<b>opcode</b>"}:::decision
+
+    subgraph EXEC ["Etapas de Ejecución"]
+        direction TB
+        ALU["<b>ALU</b><br/>operación aritmética/lógica"]:::exec
+        Jump["<b>JUMP / BRANCH</b><br/>calcular <code>next_pc</code><br/><code>result = PC + 4</code>"]:::exec
+        Branch["<b>BRANCH condicional</b><br/>evaluar condición según <code>funct3</code><br/>si tomada: <code>next_pc = PC + imm</code>"]:::exec
+    end
+
+    WB["<b>WRITE-BACK</b><br/>escribir <code>rd ← result</code><br/>si <code>write_rd = true</code>"]:::control
+    NextPC(["<b>PC ← next_pc</b><br/><code>next_pc = PC + 4</code> o target de salto/rama"]):::control
+
+    %% Conexiones principales
+    PC --> Fetch
+    Fetch --> Decode
+    Decode --> RegFile
+    RegFile --> MuxOp
+
+    %% Bifurcación por opcode
+    MuxOp -->|"LUI / AUIPC<br/>I-type ALU<br/>R-type ALU"| ALU
+    MuxOp -->|"JAL / JALR"| Jump
+    MuxOp -->|"B-tipo"| Branch
+
+    %% Convergencia a Write-Back y actualización de PC
+    ALU --> WB
+    Jump --> WB
+    Branch --> WB
+
+    WB --> NextPC
+    NextPC -.->|"siguiente ciclo"| PC
+
+    %% Estilos modernos (Tailwind Palette)
+    classDef control fill:#ecfdf5,stroke:#10b981,stroke-width:2px,color:#064e3b,rx:8,ry:8
+    classDef exec fill:#fffbeb,stroke:#f59e0b,stroke-width:2px,color:#78350f,rx:8,ry:8
+    classDef decision fill:#eef2ff,stroke:#6366f1,stroke-width:2px,color:#312e81
+
+    style EXEC fill:#f8fafc,stroke:#cbd5e1,stroke-width:1.5px,stroke-dasharray: 5 5,color:#475569,rx:12,ry:12

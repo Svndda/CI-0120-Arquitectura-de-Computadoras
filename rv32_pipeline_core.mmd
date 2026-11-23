@@ -1,0 +1,55 @@
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'fontFamily': 'Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
+    'fontSize': '14px',
+    'lineColor': '#64748b'
+  },
+  'flowchart': {
+    'curve': 'basis',
+    'nodeSpacing': 45,
+    'rankSpacing': 50,
+    'padding': 16
+  }
+}}%%
+
+flowchart TD
+    %% ================================
+    %%  RV32-Pipeline - Arquitectura del núcleo (4 etapas)
+    %% ================================
+
+    %% Etapa IF
+    IF["<b>IF - Instruction Fetch</b><br/><code>fetch_pc</code> → leer instrucción de memoria<br/><code>PC + 4</code>"]:::stage
+    IFID[("<b>IF/ID</b><br/>registro inter-etapa")]:::reg
+
+    %% Etapa ID
+    ID["<b>ID - Instruction Decode</b><br/>decodificar campos<br/>leer registros <code>rs1, rs2</code><br/>generar inmediato"]:::stage
+    IDEX[("<b>ID/EX</b><br/>registro inter-etapa")]:::reg
+
+    %% Etapa EX
+    EX["<b>EX - Execute</b><br/>ALU / branch / jump<br/>forwarding desde <code>EX/WB</code> y <code>WB</code><br/>redirect / flush si salto o rama"]:::exec
+    EXWB[("<b>EX/WB</b><br/>registro inter-etapa")]:::reg
+
+    %% Etapa WB
+    WB["<b>WB - Write-back</b><br/>escribir registro destino <code>rd</code><br/>actualizar <code>PC / arch_pc</code>"]:::stage
+
+    %% Flujo principal del pipeline
+    IF --> IFID
+    IFID --> ID
+    ID --> IDEX
+    IDEX --> EX
+    EX --> EXWB
+    EXWB --> WB
+
+    %% Forwarding hacia EX
+    EXWB -.->|"adelantamiento de resultado"| EX
+    WB -.->|"adelantamiento de resultado"| EX
+
+    %% Redirección / flush hacia IF e ID
+    EX -.->|"redirect_pc / flush_pipeline"| IF
+    EX -.->|"redirect_pc / flush_pipeline"| ID
+
+    %% Estilos modernos (Tailwind Palette)
+    classDef stage fill:#ecfdf5,stroke:#10b981,stroke-width:2px,color:#064e3b,rx:8,ry:8
+    classDef exec fill:#fffbeb,stroke:#f59e0b,stroke-width:2px,color:#78350f,rx:8,ry:8
+    classDef reg fill:#eef2ff,stroke:#6366f1,stroke-width:2px,color:#312e81
